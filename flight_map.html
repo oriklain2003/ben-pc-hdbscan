@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Flight Tracker</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        
+        #header {
+            background: #16213e;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        #header h1 {
+            color: #0f3460;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        #refreshBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        #refreshBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        #refreshBtn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .stat-box {
+            background: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .stat-box strong {
+            color: #667eea;
+        }
+        
+        #map {
+            height: calc(100vh - 80px);
+            width: 100%;
+        }
+        
+        /* Cluster panel styles */
+        #clusterPanel {
+            position: absolute;
+            top: 90px;
+            left: 10px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 15px;
+            border-radius: 10px;
+            z-index: 1000;
+            min-width: 280px;
+            max-height: calc(100vh - 120px);
+            overflow-y: auto;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.4);
+        }
+        
+        #clusterPanel h3 {
+            margin: 0 0 15px 0;
+            color: #667eea;
+            font-size: 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 10px;
+        }
+        
+        .panel-row {
+            margin-bottom: 12px;
+        }
+        
+        .panel-row label {
+            display: block;
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+        
+        .panel-row select {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 5px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.1);
+            color: #eee;
+            font-size: 13px;
+        }
+        
+        .panel-row select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .panel-btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .panel-btn:hover {
+            transform: translateY(-1px);
+        }
+        
+        .panel-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .panel-btn-secondary {
+            background: rgba(255,255,255,0.15);
+            color: #eee;
+        }
+        
+        .panel-btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+        }
+        
+        .cluster-legend {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .cluster-legend h4 {
+            font-size: 12px;
+            color: #999;
+            margin: 0 0 10px 0;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .legend-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 4px;
+            border-radius: 2px;
+        }
+        
+        .cluster-stats {
+            background: rgba(255,255,255,0.05);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        
+        .cluster-stats div {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        
+        .cluster-stats .value {
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .toggle-panel-btn {
+            position: absolute;
+            top: 90px;
+            left: 10px;
+            z-index: 999;
+            background: rgba(22, 33, 62, 0.95);
+            border: none;
+            color: #667eea;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(22, 33, 62, 0.95);
+            padding: 30px 50px;
+            border-radius: 10px;
+            z-index: 10000;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Custom popup styles */
+        .leaflet-popup-content-wrapper {
+            background: #16213e;
+            color: #eee;
+            border-radius: 8px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+        }
+        
+        .leaflet-popup-tip {
+            background: #16213e;
+        }
+        
+        .flight-popup {
+            min-width: 250px;
+        }
+        
+        .flight-popup h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        
+        .flight-info {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 5px 10px;
+            font-size: 13px;
+        }
+        
+        .flight-info .label {
+            color: #999;
+        }
+        
+        .flight-info .value {
+            color: #eee;
+            font-weight: 500;
+        }
+        
+        /* Custom airplane icon */
+        .airplane-icon {
+            font-size: 24px;
+            text-align: center;
+            line-height: 1;
+        }
+        
+        .error-message {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            background: #e74c3c;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 5px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            z-index: 10000;
+            max-width: 400px;
+        }
+        
+        .success-message {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            background: #2ecc71;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 5px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            z-index: 10000;
+            max-width: 400px;
+        }
+        
+        .flight-path-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .flight-path-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.4);
+        }
+        
+        .flight-path-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .clear-path-btn {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .clear-path-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);
+        }
+        
+        /* Path info box */
+        .path-info {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 8px;
+            border-radius: 5px;
+            margin-top: 8px;
+            font-size: 12px;
+            border-left: 3px solid #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>✈️ Live Flight Tracker</h1>
+        <div id="controls">
+            <div id="status">
+                <div class="stat-box">
+                    <strong>Flights:</strong> <span id="flightCount">0</span>
+                </div>
+                <div class="stat-box">
+                    <strong>Last Update:</strong> <span id="lastUpdate">Never</span>
+                </div>
+            </div>
+            <button id="refreshBtn" onclick="loadFlights()">🔄 Refresh</button>
+            <button id="clearPathBtn" class="clear-path-btn" onclick="clearAllPaths()" style="display: none;">🗑️ Clear Paths</button>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <!-- Cluster Control Panel -->
+    <button class="toggle-panel-btn" id="togglePanelBtn" onclick="toggleClusterPanel()">📊 Clusters</button>
+    <div id="clusterPanel">
+        <h3>📊 Cluster Analysis</h3>
+        
+        <div class="panel-row">
+            <label>Origin Airport (ICAO)</label>
+            <select id="originSelect">
+                <option value="">-- All Origins --</option>
+            </select>
+        </div>
+        
+        <div class="panel-row">
+            <label>Destination Airport (ICAO)</label>
+            <select id="destSelect">
+                <option value="">-- All Destinations --</option>
+            </select>
+        </div>
+        
+        <div class="panel-row">
+            <label>Geographic Cluster</label>
+            <select id="geoClusterSelect">
+                <option value="">-- All Geo Clusters --</option>
+            </select>
+        </div>
+        
+        <button class="panel-btn panel-btn-primary" onclick="loadClusterPaths()">
+            🗺️ Load Cluster Paths
+        </button>
+        <button class="panel-btn panel-btn-secondary" onclick="loadClusterSummary()">
+            📈 Show Summary
+        </button>
+        <button class="panel-btn panel-btn-danger" onclick="clearClusterPaths()">
+            🗑️ Clear Cluster Paths
+        </button>
+        <button class="panel-btn panel-btn-secondary" onclick="toggleClusterPanel()">
+            ✖️ Hide Panel
+        </button>
+        
+        <div class="cluster-legend" id="clusterLegend" style="display: none;">
+            <h4>Cluster Colors</h4>
+            <div id="legendItems"></div>
+        </div>
+        
+        <div class="cluster-stats" id="clusterStats" style="display: none;">
+            <div><span>Flights:</span> <span class="value" id="statFlights">0</span></div>
+            <div><span>Points:</span> <span class="value" id="statPoints">0</span></div>
+            <div><span>Geo Clusters:</span> <span class="value" id="statGeoClusters">0</span></div>
+        </div>
+    </div>
+    
+    <div id="loadingOverlay" class="loading" style="display: none;">
+        <div class="spinner"></div>
+        <div>Loading flights...</div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // API endpoint - update this if your API runs on a different port
+        const API_URL = 'http://localhost:8000/api/flights';
+        const TRACKS_API_URL = 'http://localhost:8000/api/flights/tracks';
+        const CLUSTERS_ROUTES_URL = 'http://localhost:8000/api/clusters/routes';
+        const CLUSTERS_DATA_URL = 'http://localhost:8000/api/clusters/data';
+        const CLUSTERS_SUMMARY_URL = 'http://localhost:8000/api/clusters/summary';
+        
+        // Initialize map
+        const map = L.map('map').setView([32.0, 34.8], 8);
+        
+        // Add tile layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+        
+        // Store markers and paths
+        let flightMarkers = [];
+        let flightPaths = [];
+        let currentFlightData = [];
+        
+        // Cluster-related storage
+        let clusterPaths = [];
+        let routesData = [];
+        let clusterPanelVisible = true;
+        
+        // Create custom airplane icon
+        function createAirplaneIcon(heading) {
+            return L.divIcon({
+                html: `<div style="transform: rotate(${heading}deg); font-size: 20px;">✈️</div>`,
+                className: 'airplane-icon',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+        }
+        
+        // Format altitude
+        function formatAltitude(alt) {
+            return alt ? `${alt.toLocaleString()} ft` : 'N/A';
+        }
+        
+        // Format speed
+        function formatSpeed(speed) {
+            return speed ? `${speed} kts` : 'N/A';
+        }
+        
+        // Create popup content
+        function createPopupContent(flight) {
+            const flightNumber = flight.flight || flight.callsign || 'Unknown';
+            const origin = flight.orig_iata || flight.orig_icao || 'N/A';
+            const dest = flight.dest_iata || flight.dest_icao || 'N/A';
+            const aircraft = flight.type || 'N/A';
+            const reg = flight.reg || 'N/A';
+            const altitude = formatAltitude(flight.alt);
+            const speed = formatSpeed(flight.gspeed);
+            const verticalSpeed = flight.vspeed ? `${flight.vspeed} ft/min` : 'N/A';
+            const fr24Id = flight.fr24_id;
+            
+            return `
+                <div class="flight-popup" data-flight-id="${fr24Id}">
+                    <h3>${flightNumber}</h3>
+                    <div class="flight-info">
+                        <span class="label">Route:</span>
+                        <span class="value">${origin} → ${dest}</span>
+                        
+                        <span class="label">Aircraft:</span>
+                        <span class="value">${aircraft}</span>
+                        
+                        <span class="label">Registration:</span>
+                        <span class="value">${reg}</span>
+                        
+                        <span class="label">Altitude:</span>
+                        <span class="value">${altitude}</span>
+                        
+                        <span class="label">Speed:</span>
+                        <span class="value">${speed}</span>
+                        
+                        <span class="label">V-Speed:</span>
+                        <span class="value">${verticalSpeed}</span>
+                        
+                        <span class="label">Squawk:</span>
+                        <span class="value">${flight.squawk || 'N/A'}</span>
+                    </div>
+                    <button class="flight-path-btn" onclick="showFlightPath('${fr24Id}', '${flightNumber}')">
+                        📍 Show Flight Path
+                    </button>
+                </div>
+            `;
+        }
+        
+        // Show loading
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'block';
+            document.getElementById('refreshBtn').disabled = true;
+        }
+        
+        // Hide loading
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+            document.getElementById('refreshBtn').disabled = false;
+        }
+        
+        // Show error message
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            document.body.appendChild(errorDiv);
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+        
+        // Show success message
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-message';
+            successDiv.textContent = message;
+            document.body.appendChild(successDiv);
+            
+            setTimeout(() => {
+                successDiv.remove();
+            }, 3000);
+        }
+        
+        // Clear all markers
+        function clearMarkers() {
+            flightMarkers.forEach(marker => map.removeLayer(marker));
+            flightMarkers = [];
+        }
+        
+        // Show flight path
+        async function showFlightPath(flightId, flightNumber) {
+            // Disable button
+            const buttons = document.querySelectorAll('.flight-path-btn');
+            buttons.forEach(btn => btn.disabled = true);
+            buttons.forEach(btn => btn.textContent = '⏳ Loading...');
+            
+            try {
+                const response = await fetch(`${TRACKS_API_URL}/${flightId}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+                    throw new Error('No track data available for this flight');
+                }
+                
+                const flightTrackData = data.data[0];
+                
+                if (!flightTrackData.tracks || flightTrackData.tracks.length === 0) {
+                    throw new Error('No track points available for this flight');
+                }
+                
+                // Extract coordinates from tracks
+                const tracks = flightTrackData.tracks;
+                const coordinates = tracks
+                    .filter(point => point.lat && point.lon)
+                    .map(point => [point.lat, point.lon]);
+                
+                if (coordinates.length === 0) {
+                    throw new Error('No valid coordinates in track data');
+                }
+                
+                // Create a polyline for the flight path
+                const pathLine = L.polyline(coordinates, {
+                    color: '#667eea',
+                    weight: 3,
+                    opacity: 0.8,
+                    smoothFactor: 1
+                }).addTo(map);
+                
+                // Add start marker (green)
+                const startPoint = tracks[0];
+                const startMarker = L.circleMarker([startPoint.lat, startPoint.lon], {
+                    radius: 8,
+                    fillColor: '#2ecc71',
+                    color: '#fff',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                }).addTo(map);
+                
+                startMarker.bindPopup(`
+                    <div style="color: #2c3e50;">
+                        <strong>🛫 Start</strong><br>
+                        Time: ${new Date(startPoint.timestamp).toLocaleString()}<br>
+                        Alt: ${formatAltitude(startPoint.alt)}<br>
+                        Speed: ${formatSpeed(startPoint.gspeed)}
+                    </div>
+                `);
+                
+                // Add end marker (red)
+                const endPoint = tracks[tracks.length - 1];
+                const endMarker = L.circleMarker([endPoint.lat, endPoint.lon], {
+                    radius: 8,
+                    fillColor: '#e74c3c',
+                    color: '#fff',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                }).addTo(map);
+                
+                endMarker.bindPopup(`
+                    <div style="color: #2c3e50;">
+                        <strong>🛬 Current/End</strong><br>
+                        Time: ${new Date(endPoint.timestamp).toLocaleString()}<br>
+                        Alt: ${formatAltitude(endPoint.alt)}<br>
+                        Speed: ${formatSpeed(endPoint.gspeed)}
+                    </div>
+                `);
+                
+                // Store path layers for later removal
+                flightPaths.push({
+                    flightId: flightId,
+                    flightNumber: flightNumber,
+                    line: pathLine,
+                    startMarker: startMarker,
+                    endMarker: endMarker
+                });
+                
+                // Fit map to show the entire path
+                map.fitBounds(pathLine.getBounds(), { padding: [50, 50] });
+                
+                // Show clear button
+                document.getElementById('clearPathBtn').style.display = 'block';
+                
+                // Show success message
+                showSuccess(`Flight path loaded for ${flightNumber} (${tracks.length} points)`);
+                
+            } catch (error) {
+                console.error('Error loading flight path:', error);
+                showError(`Failed to load flight path: ${error.message}`);
+            } finally {
+                // Re-enable buttons
+                buttons.forEach(btn => btn.disabled = false);
+                buttons.forEach(btn => btn.textContent = '📍 Show Flight Path');
+            }
+        }
+        
+        // Clear all flight paths
+        function clearAllPaths() {
+            flightPaths.forEach(pathData => {
+                map.removeLayer(pathData.line);
+                map.removeLayer(pathData.startMarker);
+                map.removeLayer(pathData.endMarker);
+            });
+            
+            flightPaths = [];
+            
+            // Hide clear button
+            document.getElementById('clearPathBtn').style.display = 'none';
+            
+            showSuccess('All flight paths cleared');
+        }
+        
+        // Load flights from API
+        async function loadFlights() {
+            showLoading();
+            
+            try {
+                const response = await fetch(API_URL);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Clear existing markers
+                clearMarkers();
+                
+                // Add markers for each flight
+                if (data.data && Array.isArray(data.data)) {
+                    // Store current flight data
+                    currentFlightData = data.data;
+                    
+                    data.data.forEach(flight => {
+                        if (flight.lat && flight.lon) {
+                            const marker = L.marker([flight.lat, flight.lon], {
+                                icon: createAirplaneIcon(flight.track || 0)
+                            }).addTo(map);
+                            
+                            marker.bindPopup(createPopupContent(flight));
+                            flightMarkers.push(marker);
+                        }
+                    });
+                    
+                    // Update flight count
+                    document.getElementById('flightCount').textContent = data.data.length;
+                    
+                    // Update last update time
+                    const now = new Date();
+                    document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+                } else {
+                    showError('No flight data available');
+                }
+                
+            } catch (error) {
+                console.error('Error loading flights:', error);
+                showError(`Failed to load flights: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // Auto-refresh every 30 seconds
+        let autoRefreshInterval;
+        
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(loadFlights, 30000);
+        }
+        
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+        }
+        
+        // Initial load
+        loadFlights();
+        
+        // Start auto-refresh
+        startAutoRefresh();
+        
+        // Stop auto-refresh when page is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
+        
+        // ─────────────────────────────────────────────────────────────────────
+        // CLUSTER VISUALIZATION FUNCTIONS
+        // ─────────────────────────────────────────────────────────────────────
+        
+        // Color palette for clusters
+        const CLUSTER_COLORS = [
+            '#667eea', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6',
+            '#1abc9c', '#e67e22', '#3498db', '#e91e63', '#00bcd4',
+            '#8bc34a', '#ff5722', '#673ab7', '#009688', '#ffc107'
+        ];
+        
+        function getClusterColor(clusterId) {
+            if (clusterId < 0) return '#666666'; // noise color
+            return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+        }
+        
+        // Toggle cluster panel visibility
+        function toggleClusterPanel() {
+            const panel = document.getElementById('clusterPanel');
+            const toggleBtn = document.getElementById('togglePanelBtn');
+            clusterPanelVisible = !clusterPanelVisible;
+            
+            if (clusterPanelVisible) {
+                panel.style.display = 'block';
+                toggleBtn.style.display = 'none';
+            } else {
+                panel.style.display = 'none';
+                toggleBtn.style.display = 'block';
+            }
+        }
+        
+        // Load available routes for dropdowns
+        async function loadRoutes() {
+            try {
+                const response = await fetch(CLUSTERS_ROUTES_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                routesData = data.routes || [];
+                
+                // Get unique origins and destinations
+                const origins = [...new Set(routesData.map(r => r.origin))].sort();
+                const dests = [...new Set(routesData.map(r => r.dest))].sort();
+                
+                // Populate origin dropdown
+                const originSelect = document.getElementById('originSelect');
+                originSelect.innerHTML = '<option value="">-- All Origins --</option>';
+                origins.forEach(o => {
+                    originSelect.innerHTML += `<option value="${o}">${o}</option>`;
+                });
+                
+                // Populate destination dropdown
+                const destSelect = document.getElementById('destSelect');
+                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
+                dests.forEach(d => {
+                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
+                });
+                
+            } catch (error) {
+                console.error('Error loading routes:', error);
+            }
+        }
+        
+        // Update destination dropdown based on selected origin
+        document.getElementById('originSelect').addEventListener('change', function() {
+            const selectedOrigin = this.value;
+            const destSelect = document.getElementById('destSelect');
+            
+            if (!selectedOrigin) {
+                // Show all destinations
+                const dests = [...new Set(routesData.map(r => r.dest))].sort();
+                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
+                dests.forEach(d => {
+                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
+                });
+            } else {
+                // Filter destinations for this origin
+                const filteredDests = routesData
+                    .filter(r => r.origin === selectedOrigin)
+                    .map(r => r.dest)
+                    .sort();
+                
+                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
+                filteredDests.forEach(d => {
+                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
+                });
+            }
+            
+            // Reset geo cluster dropdown
+            document.getElementById('geoClusterSelect').innerHTML = '<option value="">-- All Geo Clusters --</option>';
+        });
+        
+        // Load cluster summary and update geo cluster dropdown
+        async function loadClusterSummary() {
+            const origin = document.getElementById('originSelect').value;
+            const dest = document.getElementById('destSelect').value;
+            
+            showLoading();
+            
+            try {
+                let url = CLUSTERS_SUMMARY_URL;
+                const params = new URLSearchParams();
+                if (origin) params.append('origin', origin);
+                if (dest) params.append('dest', dest);
+                if (params.toString()) url += '?' + params.toString();
+                
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                // Update geo cluster dropdown
+                const geoSelect = document.getElementById('geoClusterSelect');
+                geoSelect.innerHTML = '<option value="">-- All Geo Clusters --</option>';
+                
+                if (data.clusters && data.clusters.length > 0) {
+                    data.clusters.forEach(c => {
+                        geoSelect.innerHTML += `<option value="${c.geo_cluster}">Cluster ${c.geo_cluster} (${c.point_count} pts, ${c.flight_count} flights)</option>`;
+                    });
+                }
+                
+                // Update stats
+                document.getElementById('clusterStats').style.display = 'block';
+                document.getElementById('statFlights').textContent = data.summary.total_flights || 0;
+                document.getElementById('statPoints').textContent = data.summary.total_points || 0;
+                document.getElementById('statGeoClusters').textContent = data.clusters ? data.clusters.length : 0;
+                
+                showSuccess(`Summary loaded: ${data.clusters?.length || 0} clusters`);
+                
+            } catch (error) {
+                console.error('Error loading cluster summary:', error);
+                showError(`Failed to load summary: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // Load and visualize cluster paths
+        async function loadClusterPaths() {
+            const origin = document.getElementById('originSelect').value;
+            const dest = document.getElementById('destSelect').value;
+            const geoCluster = document.getElementById('geoClusterSelect').value;
+            
+            showLoading();
+            
+            try {
+                let url = CLUSTERS_DATA_URL;
+                const params = new URLSearchParams();
+                if (origin) params.append('origin', origin);
+                if (dest) params.append('dest', dest);
+                if (geoCluster !== '') params.append('geo_cluster', geoCluster);
+                if (params.toString()) url += '?' + params.toString();
+                
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                if (!data.flights || data.flights.length === 0) {
+                    showError('No flight data found for the selected filters');
+                    hideLoading();
+                    return;
+                }
+                
+                // Clear existing cluster paths
+                clearClusterPaths();
+                
+                // Track unique geo clusters for legend
+                const geoClusterSet = new Set();
+                
+                // Draw paths for each flight
+                data.flights.forEach(flight => {
+                    if (!flight.points || flight.points.length < 2) return;
+                    
+                    const coords = flight.points.map(p => [p.lat, p.lon]);
+                    const clusterId = flight.geo_cluster;
+                    const color = getClusterColor(clusterId);
+                    
+                    geoClusterSet.add(clusterId);
+                    
+                    // Create polyline
+                    const polyline = L.polyline(coords, {
+                        color: color,
+                        weight: 2,
+                        opacity: 0.7,
+                        smoothFactor: 1
+                    }).addTo(map);
+                    
+                    // Add popup with flight info
+                    polyline.bindPopup(`
+                        <div style="color: #2c3e50; min-width: 180px;">
+                            <strong>Flight: ${flight.fr24_id}</strong><br>
+                            Route: ${flight.origin} → ${flight.dest}<br>
+                            Geo Cluster: ${clusterId}<br>
+                            Alt Cluster: ${flight.alt_cluster}<br>
+                            Points: ${flight.points.length}
+                        </div>
+                    `);
+                    
+                    clusterPaths.push({
+                        line: polyline,
+                        flight: flight
+                    });
+                });
+                
+                // Update legend
+                updateClusterLegend(geoClusterSet);
+                
+                // Update stats
+                document.getElementById('clusterStats').style.display = 'block';
+                document.getElementById('statFlights').textContent = data.summary.total_flights || 0;
+                document.getElementById('statPoints').textContent = data.summary.total_points || 0;
+                document.getElementById('statGeoClusters').textContent = data.summary.geo_clusters?.length || 0;
+                
+                // Fit map to show all paths
+                if (clusterPaths.length > 0) {
+                    const group = L.featureGroup(clusterPaths.map(p => p.line));
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                }
+                
+                showSuccess(`Loaded ${data.flights.length} flights with ${data.summary.total_points} points`);
+                
+            } catch (error) {
+                console.error('Error loading cluster paths:', error);
+                showError(`Failed to load paths: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // Update the cluster legend
+        function updateClusterLegend(geoClusterSet) {
+            const legend = document.getElementById('clusterLegend');
+            const legendItems = document.getElementById('legendItems');
+            
+            if (geoClusterSet.size === 0) {
+                legend.style.display = 'none';
+                return;
+            }
+            
+            legend.style.display = 'block';
+            legendItems.innerHTML = '';
+            
+            const sortedClusters = [...geoClusterSet].sort((a, b) => a - b);
+            
+            sortedClusters.forEach(clusterId => {
+                const color = getClusterColor(clusterId);
+                const label = clusterId < 0 ? 'Noise' : `Cluster ${clusterId}`;
+                
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${color};"></div>
+                    <span>${label}</span>
+                `;
+                item.onclick = () => highlightCluster(clusterId);
+                legendItems.appendChild(item);
+            });
+        }
+        
+        // Highlight paths of a specific cluster
+        function highlightCluster(clusterId) {
+            clusterPaths.forEach(p => {
+                if (p.flight.geo_cluster === clusterId) {
+                    p.line.setStyle({ weight: 4, opacity: 1 });
+                    p.line.bringToFront();
+                } else {
+                    p.line.setStyle({ weight: 1, opacity: 0.3 });
+                }
+            });
+            
+            // Reset after 3 seconds
+            setTimeout(() => {
+                clusterPaths.forEach(p => {
+                    p.line.setStyle({ weight: 2, opacity: 0.7 });
+                });
+            }, 3000);
+        }
+        
+        // Clear all cluster paths
+        function clearClusterPaths() {
+            clusterPaths.forEach(p => {
+                map.removeLayer(p.line);
+            });
+            clusterPaths = [];
+            
+            document.getElementById('clusterLegend').style.display = 'none';
+            document.getElementById('clusterStats').style.display = 'none';
+        }
+        
+        // Initialize cluster panel on load
+        loadRoutes();
+    </script>
+</body>
+</html>
