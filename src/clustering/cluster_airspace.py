@@ -128,8 +128,10 @@ def hierarchical_cluster(
     *,
     eps_geo_km: float = 5.0,
     eps_alt: float = 300.0,
-    min_samples_geo: int = 20,
-    min_samples_alt: int = 20,
+    base_min_samples_geo: int | None = None,
+    base_min_samples_alt: int | None = None,
+    adaptive_ratio: float = 0.4,
+    min_samples_floor: int = 3,
 ) -> pd.DataFrame:
     """Perform the three-level clustering and return the original DataFrame
     annotated with *geo_cluster* and *alt_cluster* columns.
@@ -144,22 +146,46 @@ def hierarchical_cluster(
     df["geo_cluster"] = -1  # initialise
     df["alt_cluster"] = -1
 
-    # Level-0: iterate O/D pairs (vectorised grouping)
+    # Level-0: iterate O/D pairs
     od_groups = df.groupby(["orig_icao", "dest_icao"], sort=False)
     for (orig, dest), g_idx in od_groups.groups.items():
-        # Work on a *view* for in-place labelling
+        n_flights_od = df.loc[g_idx, "fr24_id"].nunique()
+        ms_geo = (
+            base_min_samples_geo
+            if base_min_samples_geo is not None
+            else max(min_samples_floor, int(adaptive_ratio * n_flights_od))
+        )
+
+        # --- Geographic clustering -------------------------------------------------
         coords = df.loc[g_idx, ["lat", "lon"]].values.astype(float)
-        labels_geo = haversine_dbscan(coords, eps_km=eps_geo_km, min_samples=min_samples_geo)
+        labels_geo = haversine_dbscan(coords, eps_km=eps_geo_km, min_samples=ms_geo)
         df.loc[g_idx, "geo_cluster"] = labels_geo
 
-        # Level-1: altitude clustering inside each geo cluster
+        # --- Altitude clustering inside each geo cluster ---------------------------
         for geo_id in np.unique(labels_geo):
             if geo_id == -1:
                 continue  # skip noise trajectory clusters
             geo_mask = (df.index.isin(g_idx)) & (df["geo_cluster"] == geo_id)
+            n_flights_geo = df.loc[geo_mask, "fr24_id"].nunique()
+            ms_alt = (
+                base_min_samples_alt
+                if base_min_samples_alt is not None
+                else max(min_samples_floor, int(adaptive_ratio * n_flights_geo))
+            )
             altitudes = df.loc[geo_mask, "alt"].values.astype(float)
-            labels_alt = altitude_dbscan(altitudes, eps_alt=eps_alt, min_samples=min_samples_alt)
+            labels_alt = altitude_dbscan(altitudes, eps_alt=eps_alt, min_samples=ms_alt)
             df.loc[geo_mask, "alt_cluster"] = labels_alt
+
+    # Derive a unique path identifier per point
+    df["path_id"] = (
+        df["orig_icao"].astype(str)
+        + "_"
+        + df["dest_icao"].astype(str)
+        + "_"
+        + df["geo_cluster"].astype(str)
+        + "_"
+        + df["alt_cluster"].astype(str)
+    )
 
     return df
 
@@ -187,16 +213,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="DBSCAN eps for altitude clustering in feet (default: 500 ft)",
     )
     p.add_argument(
-        "--min-samples-geo",
+        "--base-min-samples-geo",
         type=int,
-        default=10,
-        help="min_samples for geographic DBSCAN (default: 10)",
+        default=None,
+        help="Fixed min_samples for geographic DBSCAN (default: adaptive based on flight count)",
     )
     p.add_argument(
-        "--min-samples-alt",
+        "--base-min-samples-alt",
         type=int,
-        default=10,
-        help="min_samples for altitude DBSCAN (default: 10)",
+        default=None,
+        help="Fixed min_samples for altitude DBSCAN (default: adaptive based on flight count)",
+    )
+    p.add_argument(
+        "--adaptive-ratio",
+        type=float,
+        default=0.4,
+        help="Ratio of flights to use for adaptive min_samples (default: 0.4)",
+    )
+    p.add_argument(
+        "--min-samples-floor",
+        type=int,
+        default=3,
+        help="Minimum floor for adaptive min_samples (default: 3)",
     )
     p.add_argument(
         "--out",
@@ -243,8 +281,10 @@ def main() -> None:
         df,
         eps_geo_km=args.eps_geo_km,
         eps_alt=args.eps_alt,
-        min_samples_geo=args.min_samples_geo,
-        min_samples_alt=args.min_samples_alt,
+        base_min_samples_geo=args.base_min_samples_geo,
+        base_min_samples_alt=args.base_min_samples_alt,
+        adaptive_ratio=args.adaptive_ratio,
+        min_samples_floor=args.min_samples_floor,
     )
 
     summarise_clusters(df_clustered)

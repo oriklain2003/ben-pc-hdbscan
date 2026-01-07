@@ -404,54 +404,43 @@
     
     <div id="map"></div>
     
-    <!-- Cluster Control Panel -->
-    <button class="toggle-panel-btn" id="togglePanelBtn" onclick="toggleClusterPanel()">📊 Clusters</button>
+    <!-- Route Corridors Panel -->
+    <button class="toggle-panel-btn" id="togglePanelBtn" onclick="toggleClusterPanel()">✈️ Routes</button>
     <div id="clusterPanel">
-        <h3>📊 Cluster Analysis</h3>
+        <h3>✈️ Flight Route Corridors</h3>
         
         <div class="panel-row">
-            <label>Origin Airport (ICAO)</label>
-            <select id="originSelect">
-                <option value="">-- All Origins --</option>
+            <label>Select Route (Origin → Dest)</label>
+            <select id="routeSelect">
+                <option value="">-- Select a Route --</option>
             </select>
         </div>
         
-        <div class="panel-row">
-            <label>Destination Airport (ICAO)</label>
-            <select id="destSelect">
-                <option value="">-- All Destinations --</option>
-            </select>
-        </div>
-        
-        <div class="panel-row">
-            <label>Geographic Cluster</label>
-            <select id="geoClusterSelect">
-                <option value="">-- All Geo Clusters --</option>
-            </select>
-        </div>
-        
-        <button class="panel-btn panel-btn-primary" onclick="loadClusterPaths()">
-            🗺️ Load Cluster Paths
+        <button class="panel-btn panel-btn-primary" onclick="loadRouteCorridor()">
+            🗺️ Show Route Corridors
         </button>
-        <button class="panel-btn panel-btn-secondary" onclick="loadClusterSummary()">
-            📈 Show Summary
+        <button class="panel-btn panel-btn-secondary" onclick="loadAllRoutes()">
+            🌍 Show All Routes
+        </button>
+        <button class="panel-btn panel-btn-secondary" onclick="showCentrelinesForRoute()">
+            📍 Show Path Centrelines
         </button>
         <button class="panel-btn panel-btn-danger" onclick="clearClusterPaths()">
-            🗑️ Clear Cluster Paths
+            🗑️ Clear Routes
         </button>
         <button class="panel-btn panel-btn-secondary" onclick="toggleClusterPanel()">
             ✖️ Hide Panel
         </button>
         
         <div class="cluster-legend" id="clusterLegend" style="display: none;">
-            <h4>Cluster Colors</h4>
+            <h4>Route Corridors</h4>
             <div id="legendItems"></div>
         </div>
         
         <div class="cluster-stats" id="clusterStats" style="display: none;">
-            <div><span>Flights:</span> <span class="value" id="statFlights">0</span></div>
-            <div><span>Points:</span> <span class="value" id="statPoints">0</span></div>
-            <div><span>Geo Clusters:</span> <span class="value" id="statGeoClusters">0</span></div>
+            <div><span>Route:</span> <span class="value" id="statRoute">-</span></div>
+            <div><span>Corridors:</span> <span class="value" id="statCorridors">0</span></div>
+            <div><span>Total Flights:</span> <span class="value" id="statFlights">0</span></div>
         </div>
     </div>
     
@@ -470,6 +459,12 @@
         const CLUSTERS_ROUTES_URL = 'http://localhost:8000/api/clusters/routes';
         const CLUSTERS_DATA_URL = 'http://localhost:8000/api/clusters/data';
         const CLUSTERS_SUMMARY_URL = 'http://localhost:8000/api/clusters/summary';
+        // Trajectory-based aggregated routes
+        const ROUTES_LIST_URL = 'http://localhost:8000/api/routes/list';
+        const ROUTES_URL = 'http://localhost:8000/api/routes';
+        // Path centrelines and deviation detection
+        const PATH_CENTRELINES_URL = 'http://localhost:8000/api/path';
+        const FLIGHT_DEVIATION_URL = 'http://localhost:8000/api/flight';
         
         // Initialize map
         const map = L.map('map').setView([32.0, 34.8], 8);
@@ -491,10 +486,25 @@
         let routesData = [];
         let clusterPanelVisible = true;
         
-        // Create custom airplane icon
-        function createAirplaneIcon(heading) {
+        // Centreline paths and deviation data
+        let centrelinePaths = [];
+        let flightDeviations = {};
+        
+        // Create custom airplane icon with optional color for deviation status
+        function createAirplaneIcon(heading, deviationStatus = null) {
+            let bgColor = 'transparent';
+            let shadow = '';
+            
+            if (deviationStatus === 'normal') {
+                bgColor = 'rgba(46, 204, 113, 0.3)';  // green
+                shadow = '0 0 10px rgba(46, 204, 113, 0.6)';
+            } else if (deviationStatus === 'off-path') {
+                bgColor = 'rgba(231, 76, 60, 0.3)';  // red
+                shadow = '0 0 10px rgba(231, 76, 60, 0.6)';
+            }
+            
             return L.divIcon({
-                html: `<div style="transform: rotate(${heading}deg); font-size: 20px;">✈️</div>`,
+                html: `<div style="transform: rotate(${heading}deg); font-size: 20px; background: ${bgColor}; border-radius: 50%; padding: 5px; box-shadow: ${shadow};">✈️</div>`,
                 className: 'airplane-icon',
                 iconSize: [30, 30],
                 iconAnchor: [15, 15]
@@ -512,7 +522,7 @@
         }
         
         // Create popup content
-        function createPopupContent(flight) {
+        function createPopupContent(flight, deviationData = null) {
             const flightNumber = flight.flight || flight.callsign || 'Unknown';
             const origin = flight.orig_iata || flight.orig_icao || 'N/A';
             const dest = flight.dest_iata || flight.dest_icao || 'N/A';
@@ -522,6 +532,20 @@
             const speed = formatSpeed(flight.gspeed);
             const verticalSpeed = flight.vspeed ? `${flight.vspeed} ft/min` : 'N/A';
             const fr24Id = flight.fr24_id;
+            
+            let deviationHtml = '';
+            if (deviationData) {
+                const statusColor = deviationData.status === 'normal' ? '#2ecc71' : '#e74c3c';
+                const statusIcon = deviationData.status === 'normal' ? '✅' : '⚠️';
+                const deviationPct = (deviationData.deviation_ratio * 100).toFixed(1);
+                
+                deviationHtml = `
+                    <div class="path-info" style="border-left-color: ${statusColor};">
+                        <strong>${statusIcon} Path Status: ${deviationData.status === 'normal' ? 'Normal' : 'Off-Path'}</strong><br>
+                        <span style="font-size: 11px;">Deviation: ${deviationPct}% (threshold: 20%)</span>
+                    </div>
+                `;
+            }
             
             return `
                 <div class="flight-popup" data-flight-id="${fr24Id}">
@@ -548,6 +572,7 @@
                         <span class="label">Squawk:</span>
                         <span class="value">${flight.squawk || 'N/A'}</span>
                     </div>
+                    ${deviationHtml}
                     <button class="flight-path-btn" onclick="showFlightPath('${fr24Id}', '${flightNumber}')">
                         📍 Show Flight Path
                     </button>
@@ -725,6 +750,77 @@
             showSuccess('All flight paths cleared');
         }
         
+        // Check flight deviation status (for historical flights only)
+        async function checkFlightDeviation(fr24Id) {
+            try {
+                const response = await fetch(`${FLIGHT_DEVIATION_URL}/${fr24Id}/deviation`);
+                if (!response.ok) return null;
+                
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.log(`No deviation data for ${fr24Id}`);
+                return null;
+            }
+        }
+        
+        // Load and display centrelines for a specific O/D pair
+        async function loadCentrelines(origin, dest) {
+            try {
+                const response = await fetch(`${PATH_CENTRELINES_URL}/${origin}/${dest}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                if (!data.paths || data.paths.length === 0) {
+                    return;
+                }
+                
+                // Draw each path
+                data.paths.forEach((path, idx) => {
+                    const coords = path.points.map(p => [p.lat, p.lon]);
+                    if (coords.length < 2) return;
+                    
+                    const color = getCorridorColor(idx);
+                    
+                    // Create thin dashed line for centrelines
+                    const polyline = L.polyline(coords, {
+                        color: color,
+                        weight: 2,
+                        opacity: 0.6,
+                        dashArray: '5, 10',
+                        smoothFactor: 1
+                    }).addTo(map);
+                    
+                    polyline.bindPopup(`
+                        <div style="color: #2c3e50;">
+                            <strong>Path ${idx + 1}</strong><br>
+                            <strong>Route:</strong> ${origin} → ${dest}<br>
+                            <strong>Geo Cluster:</strong> ${path.geo_cluster}<br>
+                            <strong>Alt Cluster:</strong> ${path.alt_cluster}
+                        </div>
+                    `);
+                    
+                    centrelinePaths.push({
+                        line: polyline,
+                        origin: origin,
+                        dest: dest
+                    });
+                });
+                
+            } catch (error) {
+                console.log(`No centrelines for ${origin} → ${dest}`);
+            }
+        }
+        
+        // Clear all centreline paths
+        function clearCentrelines() {
+            centrelinePaths.forEach(p => {
+                map.removeLayer(p.line);
+            });
+            centrelinePaths = [];
+        }
+        
         // Load flights from API
         async function loadFlights() {
             showLoading();
@@ -746,13 +842,34 @@
                     // Store current flight data
                     currentFlightData = data.data;
                     
+                    // Check deviation for historical flights (if they exist in our database)
+                    const deviationChecks = data.data.map(async flight => {
+                        if (flight.fr24_id) {
+                            const deviation = await checkFlightDeviation(flight.fr24_id);
+                            if (deviation) {
+                                flightDeviations[flight.fr24_id] = deviation;
+                            }
+                        }
+                        return flight;
+                    });
+                    
+                    // Wait for all deviation checks to complete (with timeout)
+                    await Promise.race([
+                        Promise.all(deviationChecks),
+                        new Promise(resolve => setTimeout(resolve, 2000))  // 2s timeout
+                    ]);
+                    
+                    // Create markers with deviation status
                     data.data.forEach(flight => {
                         if (flight.lat && flight.lon) {
+                            const deviation = flightDeviations[flight.fr24_id];
+                            const deviationStatus = deviation ? deviation.status : null;
+                            
                             const marker = L.marker([flight.lat, flight.lon], {
-                                icon: createAirplaneIcon(flight.track || 0)
+                                icon: createAirplaneIcon(flight.track || 0, deviationStatus)
                             }).addTo(map);
                             
-                            marker.bindPopup(createPopupContent(flight));
+                            marker.bindPopup(createPopupContent(flight, deviation));
                             flightMarkers.push(marker);
                         }
                     });
@@ -763,6 +880,13 @@
                     // Update last update time
                     const now = new Date();
                     document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+                    
+                    // Count deviation status
+                    const normalCount = Object.values(flightDeviations).filter(d => d.status === 'normal').length;
+                    const offPathCount = Object.values(flightDeviations).filter(d => d.status === 'off-path').length;
+                    if (normalCount > 0 || offPathCount > 0) {
+                        console.log(`Deviation: ${normalCount} normal, ${offPathCount} off-path`);
+                    }
                 } else {
                     showError('No flight data available');
                 }
@@ -804,22 +928,21 @@
         });
         
         // ─────────────────────────────────────────────────────────────────────
-        // CLUSTER VISUALIZATION FUNCTIONS
+        // ROUTE CORRIDOR VISUALIZATION FUNCTIONS
         // ─────────────────────────────────────────────────────────────────────
         
-        // Color palette for clusters
-        const CLUSTER_COLORS = [
+        // Color palette for route corridors
+        const CORRIDOR_COLORS = [
             '#667eea', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6',
             '#1abc9c', '#e67e22', '#3498db', '#e91e63', '#00bcd4',
             '#8bc34a', '#ff5722', '#673ab7', '#009688', '#ffc107'
         ];
         
-        function getClusterColor(clusterId) {
-            if (clusterId < 0) return '#666666'; // noise color
-            return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+        function getCorridorColor(index) {
+            return CORRIDOR_COLORS[index % CORRIDOR_COLORS.length];
         }
         
-        // Toggle cluster panel visibility
+        // Toggle panel visibility
         function toggleClusterPanel() {
             const panel = document.getElementById('clusterPanel');
             const toggleBtn = document.getElementById('togglePanelBtn');
@@ -834,211 +957,223 @@
             }
         }
         
-        // Load available routes for dropdowns
+        // Load available routes for dropdown
         async function loadRoutes() {
             try {
-                const response = await fetch(CLUSTERS_ROUTES_URL);
+                const response = await fetch(ROUTES_LIST_URL);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const data = await response.json();
                 routesData = data.routes || [];
                 
-                // Get unique origins and destinations
-                const origins = [...new Set(routesData.map(r => r.origin))].sort();
-                const dests = [...new Set(routesData.map(r => r.dest))].sort();
+                const routeSelect = document.getElementById('routeSelect');
+                routeSelect.innerHTML = '<option value="">-- Select a Route --</option>';
                 
-                // Populate origin dropdown
-                const originSelect = document.getElementById('originSelect');
-                originSelect.innerHTML = '<option value="">-- All Origins --</option>';
-                origins.forEach(o => {
-                    originSelect.innerHTML += `<option value="${o}">${o}</option>`;
-                });
-                
-                // Populate destination dropdown
-                const destSelect = document.getElementById('destSelect');
-                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
-                dests.forEach(d => {
-                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
+                routesData.forEach(r => {
+                    routeSelect.innerHTML += `<option value="${r.origin}|${r.dest}">${r.origin} → ${r.dest} (${r.num_routes} corridor${r.num_routes > 1 ? 's' : ''}, ${r.total_flights} flights)</option>`;
                 });
                 
             } catch (error) {
                 console.error('Error loading routes:', error);
+                showError('Failed to load routes. Make sure to run trajectory_clustering.py first.');
             }
         }
         
-        // Update destination dropdown based on selected origin
-        document.getElementById('originSelect').addEventListener('change', function() {
-            const selectedOrigin = this.value;
-            const destSelect = document.getElementById('destSelect');
+        // Load and display route corridors for selected O/D pair
+        async function loadRouteCorridor() {
+            const routeSelect = document.getElementById('routeSelect');
+            const selectedRoute = routeSelect.value;
             
-            if (!selectedOrigin) {
-                // Show all destinations
-                const dests = [...new Set(routesData.map(r => r.dest))].sort();
-                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
-                dests.forEach(d => {
-                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
-                });
-            } else {
-                // Filter destinations for this origin
-                const filteredDests = routesData
-                    .filter(r => r.origin === selectedOrigin)
-                    .map(r => r.dest)
-                    .sort();
-                
-                destSelect.innerHTML = '<option value="">-- All Destinations --</option>';
-                filteredDests.forEach(d => {
-                    destSelect.innerHTML += `<option value="${d}">${d}</option>`;
-                });
+            if (!selectedRoute) {
+                showError('Please select a route first');
+                return;
             }
             
-            // Reset geo cluster dropdown
-            document.getElementById('geoClusterSelect').innerHTML = '<option value="">-- All Geo Clusters --</option>';
-        });
-        
-        // Load cluster summary and update geo cluster dropdown
-        async function loadClusterSummary() {
-            const origin = document.getElementById('originSelect').value;
-            const dest = document.getElementById('destSelect').value;
-            
+            const [origin, dest] = selectedRoute.split('|');
             showLoading();
             
             try {
-                let url = CLUSTERS_SUMMARY_URL;
-                const params = new URLSearchParams();
-                if (origin) params.append('origin', origin);
-                if (dest) params.append('dest', dest);
-                if (params.toString()) url += '?' + params.toString();
-                
-                const response = await fetch(url);
+                const response = await fetch(`${ROUTES_URL}/${origin}/${dest}`);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 
                 const data = await response.json();
                 
-                // Update geo cluster dropdown
-                const geoSelect = document.getElementById('geoClusterSelect');
-                geoSelect.innerHTML = '<option value="">-- All Geo Clusters --</option>';
-                
-                if (data.clusters && data.clusters.length > 0) {
-                    data.clusters.forEach(c => {
-                        geoSelect.innerHTML += `<option value="${c.geo_cluster}">Cluster ${c.geo_cluster} (${c.point_count} pts, ${c.flight_count} flights)</option>`;
-                    });
-                }
-                
-                // Update stats
-                document.getElementById('clusterStats').style.display = 'block';
-                document.getElementById('statFlights').textContent = data.summary.total_flights || 0;
-                document.getElementById('statPoints').textContent = data.summary.total_points || 0;
-                document.getElementById('statGeoClusters').textContent = data.clusters ? data.clusters.length : 0;
-                
-                showSuccess(`Summary loaded: ${data.clusters?.length || 0} clusters`);
-                
-            } catch (error) {
-                console.error('Error loading cluster summary:', error);
-                showError(`Failed to load summary: ${error.message}`);
-            } finally {
-                hideLoading();
-            }
-        }
-        
-        // Load and visualize cluster paths
-        async function loadClusterPaths() {
-            const origin = document.getElementById('originSelect').value;
-            const dest = document.getElementById('destSelect').value;
-            const geoCluster = document.getElementById('geoClusterSelect').value;
-            
-            showLoading();
-            
-            try {
-                let url = CLUSTERS_DATA_URL;
-                const params = new URLSearchParams();
-                if (origin) params.append('origin', origin);
-                if (dest) params.append('dest', dest);
-                if (geoCluster !== '') params.append('geo_cluster', geoCluster);
-                if (params.toString()) url += '?' + params.toString();
-                
-                const response = await fetch(url);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
-                const data = await response.json();
-                
-                if (!data.flights || data.flights.length === 0) {
-                    showError('No flight data found for the selected filters');
+                if (!data.routes || data.routes.length === 0) {
+                    showError('No route corridors found');
                     hideLoading();
                     return;
                 }
                 
-                // Clear existing cluster paths
+                // Clear existing paths
                 clearClusterPaths();
                 
-                // Track unique geo clusters for legend
-                const geoClusterSet = new Set();
-                
-                // Draw paths for each flight
-                data.flights.forEach(flight => {
-                    if (!flight.points || flight.points.length < 2) return;
+                // Draw each corridor
+                data.routes.forEach((corridor, idx) => {
+                    const coords = corridor.representative_path;
+                    if (!coords || coords.length < 2) return;
                     
-                    const coords = flight.points.map(p => [p.lat, p.lon]);
-                    const clusterId = flight.geo_cluster;
-                    const color = getClusterColor(clusterId);
+                    const color = getCorridorColor(idx);
                     
-                    geoClusterSet.add(clusterId);
-                    
-                    // Create polyline
+                    // Create polyline for corridor
                     const polyline = L.polyline(coords, {
                         color: color,
-                        weight: 2,
-                        opacity: 0.7,
+                        weight: 4,
+                        opacity: 0.85,
                         smoothFactor: 1
                     }).addTo(map);
                     
-                    // Add popup with flight info
+                    // Add popup with corridor info
+                    const avgAlt = corridor.avg_alt ? Math.round(corridor.avg_alt).toLocaleString() + ' ft' : 'N/A';
                     polyline.bindPopup(`
-                        <div style="color: #2c3e50; min-width: 180px;">
-                            <strong>Flight: ${flight.fr24_id}</strong><br>
-                            Route: ${flight.origin} → ${flight.dest}<br>
-                            Geo Cluster: ${clusterId}<br>
-                            Alt Cluster: ${flight.alt_cluster}<br>
-                            Points: ${flight.points.length}
+                        <div style="color: #2c3e50; min-width: 200px;">
+                            <strong style="font-size: 16px;">Corridor ${idx + 1}</strong><br>
+                            <hr style="margin: 8px 0;">
+                            <strong>Route:</strong> ${origin} → ${dest}<br>
+                            <strong>Flights using this corridor:</strong> ${corridor.flight_count}<br>
+                            <strong>Avg Altitude:</strong> ${avgAlt}<br>
+                            <strong>Waypoints:</strong> ${coords.length}
                         </div>
                     `);
                     
+                    // Add start/end markers
+                    const startMarker = L.circleMarker(coords[0], {
+                        radius: 8,
+                        fillColor: '#2ecc71',
+                        color: '#fff',
+                        weight: 2,
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup(`<div style="color:#2c3e50;"><strong>🛫 ${origin}</strong></div>`);
+                    
+                    const endMarker = L.circleMarker(coords[coords.length - 1], {
+                        radius: 8,
+                        fillColor: '#e74c3c',
+                        color: '#fff',
+                        weight: 2,
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup(`<div style="color:#2c3e50;"><strong>🛬 ${dest}</strong></div>`);
+                    
                     clusterPaths.push({
                         line: polyline,
-                        flight: flight
+                        startMarker: startMarker,
+                        endMarker: endMarker,
+                        corridor: corridor,
+                        corridorIndex: idx
                     });
                 });
                 
                 // Update legend
-                updateClusterLegend(geoClusterSet);
+                updateCorridorLegend(data.routes, origin, dest);
                 
                 // Update stats
                 document.getElementById('clusterStats').style.display = 'block';
-                document.getElementById('statFlights').textContent = data.summary.total_flights || 0;
-                document.getElementById('statPoints').textContent = data.summary.total_points || 0;
-                document.getElementById('statGeoClusters').textContent = data.summary.geo_clusters?.length || 0;
+                document.getElementById('statRoute').textContent = `${origin} → ${dest}`;
+                document.getElementById('statCorridors').textContent = data.routes.length;
+                document.getElementById('statFlights').textContent = data.total_flights;
                 
-                // Fit map to show all paths
+                // Fit map to show all corridors
                 if (clusterPaths.length > 0) {
                     const group = L.featureGroup(clusterPaths.map(p => p.line));
                     map.fitBounds(group.getBounds(), { padding: [50, 50] });
                 }
                 
-                showSuccess(`Loaded ${data.flights.length} flights with ${data.summary.total_points} points`);
+                showSuccess(`Loaded ${data.routes.length} corridor(s) for ${origin} → ${dest}`);
                 
             } catch (error) {
-                console.error('Error loading cluster paths:', error);
-                showError(`Failed to load paths: ${error.message}`);
+                console.error('Error loading route corridors:', error);
+                showError(`Failed to load corridors: ${error.message}`);
             } finally {
                 hideLoading();
             }
         }
         
-        // Update the cluster legend
-        function updateClusterLegend(geoClusterSet) {
+        // Load all routes at once
+        async function loadAllRoutes() {
+            showLoading();
+            
+            try {
+                const response = await fetch(ROUTES_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                if (!data.routes || data.routes.length === 0) {
+                    showError('No routes found');
+                    hideLoading();
+                    return;
+                }
+                
+                // Clear existing paths
+                clearClusterPaths();
+                
+                let totalCorridors = 0;
+                let colorIndex = 0;
+                
+                // Draw corridors for all O/D pairs
+                data.routes.forEach(odPair => {
+                    odPair.routes.forEach((corridor, idx) => {
+                        const coords = corridor.representative_path;
+                        if (!coords || coords.length < 2) return;
+                        
+                        const color = getCorridorColor(colorIndex++);
+                        totalCorridors++;
+                        
+                        const polyline = L.polyline(coords, {
+                            color: color,
+                            weight: 3,
+                            opacity: 0.7,
+                            smoothFactor: 1
+                        }).addTo(map);
+                        
+                        const avgAlt = corridor.avg_alt ? Math.round(corridor.avg_alt).toLocaleString() + ' ft' : 'N/A';
+                        polyline.bindPopup(`
+                            <div style="color: #2c3e50; min-width: 200px;">
+                                <strong style="font-size: 16px;">${odPair.origin} → ${odPair.dest}</strong><br>
+                                <strong>Corridor ${idx + 1} of ${odPair.num_routes}</strong><br>
+                                <hr style="margin: 8px 0;">
+                                <strong>Flights:</strong> ${corridor.flight_count}<br>
+                                <strong>Avg Altitude:</strong> ${avgAlt}
+                            </div>
+                        `);
+                        
+                        clusterPaths.push({
+                            line: polyline,
+                            corridor: corridor,
+                            odPair: odPair
+                        });
+                    });
+                });
+                
+                // Update stats
+                document.getElementById('clusterStats').style.display = 'block';
+                document.getElementById('statRoute').textContent = 'All Routes';
+                document.getElementById('statCorridors').textContent = totalCorridors;
+                document.getElementById('statFlights').textContent = data.summary.total_routes;
+                
+                // Hide legend for all routes view
+                document.getElementById('clusterLegend').style.display = 'none';
+                
+                // Fit map
+                if (clusterPaths.length > 0) {
+                    const group = L.featureGroup(clusterPaths.map(p => p.line));
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                }
+                
+                showSuccess(`Loaded ${totalCorridors} corridors across ${data.routes.length} routes`);
+                
+            } catch (error) {
+                console.error('Error loading all routes:', error);
+                showError(`Failed to load routes: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // Update legend for corridors
+        function updateCorridorLegend(corridors, origin, dest) {
             const legend = document.getElementById('clusterLegend');
             const legendItems = document.getElementById('legendItems');
             
-            if (geoClusterSet.size === 0) {
+            if (corridors.length === 0) {
                 legend.style.display = 'none';
                 return;
             }
@@ -1046,54 +1181,93 @@
             legend.style.display = 'block';
             legendItems.innerHTML = '';
             
-            const sortedClusters = [...geoClusterSet].sort((a, b) => a - b);
-            
-            sortedClusters.forEach(clusterId => {
-                const color = getClusterColor(clusterId);
-                const label = clusterId < 0 ? 'Noise' : `Cluster ${clusterId}`;
+            corridors.forEach((corridor, idx) => {
+                const color = getCorridorColor(idx);
                 
                 const item = document.createElement('div');
                 item.className = 'legend-item';
                 item.innerHTML = `
                     <div class="legend-color" style="background: ${color};"></div>
-                    <span>${label}</span>
+                    <span>Corridor ${idx + 1} (${corridor.flight_count} flights)</span>
                 `;
-                item.onclick = () => highlightCluster(clusterId);
+                item.onclick = () => highlightCorridor(idx);
                 legendItems.appendChild(item);
             });
         }
         
-        // Highlight paths of a specific cluster
-        function highlightCluster(clusterId) {
+        // Highlight a specific corridor
+        function highlightCorridor(corridorIndex) {
             clusterPaths.forEach(p => {
-                if (p.flight.geo_cluster === clusterId) {
-                    p.line.setStyle({ weight: 4, opacity: 1 });
+                if (p.corridorIndex === corridorIndex) {
+                    p.line.setStyle({ weight: 6, opacity: 1 });
                     p.line.bringToFront();
                 } else {
-                    p.line.setStyle({ weight: 1, opacity: 0.3 });
+                    p.line.setStyle({ weight: 2, opacity: 0.3 });
                 }
             });
             
-            // Reset after 3 seconds
             setTimeout(() => {
                 clusterPaths.forEach(p => {
-                    p.line.setStyle({ weight: 2, opacity: 0.7 });
+                    p.line.setStyle({ weight: 4, opacity: 0.85 });
                 });
             }, 3000);
         }
         
-        // Clear all cluster paths
+        // Clear all paths
         function clearClusterPaths() {
             clusterPaths.forEach(p => {
                 map.removeLayer(p.line);
+                if (p.startMarker) map.removeLayer(p.startMarker);
+                if (p.endMarker) map.removeLayer(p.endMarker);
             });
             clusterPaths = [];
+            
+            // Also clear centrelines
+            clearCentrelines();
             
             document.getElementById('clusterLegend').style.display = 'none';
             document.getElementById('clusterStats').style.display = 'none';
         }
         
-        // Initialize cluster panel on load
+        // Show centrelines for selected route
+        async function showCentrelinesForRoute() {
+            const routeSelect = document.getElementById('routeSelect');
+            const selectedRoute = routeSelect.value;
+            
+            if (!selectedRoute) {
+                showError('Please select a route first');
+                return;
+            }
+            
+            const [origin, dest] = selectedRoute.split('|');
+            showLoading();
+            
+            try {
+                // Clear existing centrelines
+                clearCentrelines();
+                
+                // Load centrelines for this O/D pair
+                await loadCentrelines(origin, dest);
+                
+                if (centrelinePaths.length > 0) {
+                    // Fit map to show all centrelines
+                    const group = L.featureGroup(centrelinePaths.map(p => p.line));
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                    
+                    showSuccess(`Loaded ${centrelinePaths.length} path centreline(s) for ${origin} → ${dest}`);
+                } else {
+                    showError(`No centrelines found for ${origin} → ${dest}. Run clustering first.`);
+                }
+                
+            } catch (error) {
+                console.error('Error loading centrelines:', error);
+                showError(`Failed to load centrelines: ${error.message}`);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // Initialize on load
         loadRoutes();
     </script>
 </body>
